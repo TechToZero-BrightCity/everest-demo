@@ -1,0 +1,65 @@
+name: everest-demo-custom
+
+services:
+  mqtt-server:
+    image: ghcr.io/everest/everest-demo/mqtt-server:${TAG}
+    ports:
+      - "${HOST_MQTT_PORT:-2727}:1883"
+
+  manager:
+    image: ghcr.io/everest/everest-demo/manager:${TAG}
+    deploy:
+      resources:
+        limits:
+          cpus: "${EVEREST_MANAGER_CPUS:-1.0}"
+          memory: "${EVEREST_MANAGER_MEMORY:-768M}"
+    depends_on:
+      - mqtt-server
+    environment:
+      - MQTT_SERVER_ADDRESS=mqtt-server
+      - DEMO_VERSION=sp1
+      - CHARGE_STATION_ID=${CHARGER_ID}
+      - CSMS_SP1_BASE=${CSMS_URL}
+      - EVEREST_LOG_DIR=/var/log/everest
+    entrypoint: >
+      sh -c "
+      echo '🔧 Configurando OCPP para CitrineOS...' &&
+      echo 'CHARGER_ID: '$CHARGE_STATION_ID &&
+      echo 'CSMS_URL: '$CSMS_SP1_BASE &&
+      cp /manager_config/config-sil-ocpp201-pnc.yaml /ext/source/config/config-sil-ocpp201-pnc.yaml &&
+      FINAL_URL=$CSMS_SP1_BASE/$CHARGE_STATION_ID &&
+      echo 'URL final: '$FINAL_URL &&
+      mkdir -p /var/log/everest &&
+      chmod 777 /var/log/everest &&
+      mkdir -p /tmp/everest_ocpp_logs &&
+      chmod 777 /tmp/everest_ocpp_logs &&
+      echo 'Diretório para logs OCPP criado' &&
+      sed -i \"s#ws://localhost:9000#$FINAL_URL#\" /ext/dist/share/everest/modules/OCPP201/component_config/standardized/InternalCtrlr.json &&
+      sed -i \"s#cp001#$CHARGE_STATION_ID#\" /ext/dist/share/everest/modules/OCPP201/component_config/standardized/InternalCtrlr.json &&
+      sed -i \"s#cp001#$CHARGE_STATION_ID#\" /ext/dist/share/everest/modules/OCPP201/component_config/standardized/SecurityCtrlr.json &&
+      echo 'Configurações aplicadas. Verificando...' &&
+      cat /ext/dist/share/everest/modules/OCPP201/component_config/standardized/InternalCtrlr.json &&
+      echo '🚀 Iniciando EVerest...' &&
+      sh /ext/build/run-scripts/run-sil-ocpp201-pnc.sh
+      "
+    volumes:
+      - ./manager:/manager_config:ro
+      - everest_logs:/var/log/everest
+    privileged: true
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=0
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  nodered:
+    image: ghcr.io/everest/everest-demo/nodered:${TAG}
+    depends_on:
+      - mqtt-server
+    ports:
+      - "1880:1880"
+    environment:
+      - MQTT_SERVER_ADDRESS=mqtt-server
+      - FLOWS=/config/config-sil-iso15118-ac-flow.json
+
+volumes:
+  everest_logs: {}
